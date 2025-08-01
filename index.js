@@ -22,7 +22,9 @@ const app = express();
 const port = process.env.PORT || 3000;
 
 // --- Middleware ---
-app.use(cors()); // Enable Cross-Origin Resource Sharing
+// 💡 FIX: Removed the problematic app.options line.
+// The cors() middleware automatically handles preflight OPTIONS requests.
+app.use(cors());
 app.use(express.json()); // Enable parsing of JSON request bodies
 
 // --- Reusable LLM and Embeddings Components ---
