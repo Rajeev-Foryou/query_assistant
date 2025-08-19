@@ -1,151 +1,245 @@
-import React, { useState } from "react";
+import React, { useState } from 'react';
+import './App.css';
 
-// You can create these as separate SVG components for better organization
-const LoadingSpinner = () => (
-  <svg
-    className="animate-spin h-5 w-5 text-white"
-    xmlns="http://www.w3.org/2000/svg"
-    fill="none"
-    viewBox="0 0 24 24"
-  >
-    <circle
-      className="opacity-25"
-      cx="12"
-      cy="12"
-      r="10"
-      stroke="currentColor"
-      strokeWidth="4"
-    ></circle>
-    <path
-      className="opacity-75"
-      fill="currentColor"
-      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-    ></path>
-  </svg>
-);
+const ChatInterface = ({ onBack }) => {
+  const [query, setQuery] = useState('');
+  const [messages, setMessages] = useState([
+    { 
+      text: "Hello! I'm your AI assistant. I can help you find information across all the documents in the knowledge base. How may I help you today?", 
+      sender: 'bot' 
+    }
+  ]);
+  const [isLoading, setIsLoading] = useState(false);
 
-const App = () => {
-  // State management using React hooks
-  const [query, setQuery] = useState("");
-  const [result, setResult] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
+  // Check if the message is a greeting
+  const isGreeting = (text) => {
+    const greetings = ['hi', 'hello', 'hey', 'greetings', 'good morning', 'good afternoon', 'good evening'];
+    return greetings.some(greeting => 
+      text.toLowerCase().trim().startsWith(greeting) || 
+      text.toLowerCase().trim() === greeting
+    );
+  };
 
-  // --- IMPORTANT ---
-  // When you deploy your backend, change this URL to your deployed API's URL.
-  const API_URL = "https://query-assistant.onrender.com/ask";
+  // Check if the message is a thank you
+  const isThankYou = (text) => {
+    const thanks = ['thank', 'thanks', 'appreciate'];
+    return thanks.some(thank => text.toLowerCase().includes(thank));
+  };
 
-  // Handles the form submission
-  const handleSubmit = async (e) => {
+  const handleSendMessage = async (e) => {
     e.preventDefault();
-    if (!query.trim()) return;
+    const userMessage = query.trim();
+    if (!userMessage) return;
 
-    // Reset state and start loading
-    setResult(null);
-    setError("");
-    setLoading(true);
+    // Add user message
+    setMessages(prev => [...prev, { text: userMessage, sender: 'user' }]);
+    setQuery('');
+    setIsLoading(true);
+
+    // Handle greetings and thanks without API call
+    if (isGreeting(userMessage)) {
+      setTimeout(() => {
+        setMessages(prev => [...prev, { 
+          text: userMessage.toLowerCase().includes('good') 
+            ? `${userMessage.split(' ')[0]} ${userMessage.split(' ')[1]}! How can I assist you today?`
+            : "Hello! How can I assist you today?", 
+          sender: 'bot' 
+        }]);
+        setIsLoading(false);
+      }, 500);
+      return;
+    }
+
+    if (isThankYou(userMessage)) {
+      setTimeout(() => {
+        setMessages(prev => [...prev, { 
+          text: "You're welcome! Is there anything else I can help with?", 
+          sender: 'bot' 
+        }]);
+        setIsLoading(false);
+      }, 500);
+      return;
+    }
 
     try {
-      const response = await fetch(API_URL, {
-        method: "POST",
+      console.log('Sending message with query:', query);
+      
+      // No need to check for uploaded file as we're using all available documents
+
+      // Call the backend API to get the response
+      const response = await fetch('http://localhost:3000/api/ask', {
+        method: 'POST',
         headers: {
-          "Content-Type": "application/json",
+          'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ query }),
+        body: JSON.stringify({
+          question: query,
+          context: {
+            useAllDocuments: true,
+            conversationId: 'user-' + Date.now() // Generate a unique conversation ID
+          }
+        })
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(
-          errorData.details || `HTTP error! Status: ${response.status}`
-        );
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
 
       const data = await response.json();
-      setResult(data);
-    } catch (err) {
-      setError(err.message);
+      
+      // Add the bot's response to the messages
+      const botResponse = {
+        text: data.answer || "I couldn't generate a response. Please try again.",
+        sender: 'bot'
+      };
+      
+      setMessages(prev => [...prev, botResponse]);
+    } catch (error) {
+      console.error('Error sending message:', error);
+      setMessages(prev => [...prev, { 
+        text: 'Sorry, there was an error processing your request. Please try again later.', 
+        sender: 'bot' 
+      }]);
     } finally {
-      setLoading(false);
+      setIsLoading(false);
     }
   };
 
   return (
-    <div className="bg-gray-50 text-gray-800 flex items-center justify-center min-h-screen font-sans">
-      <div className="w-full max-w-3xl mx-auto bg-white rounded-2xl shadow-lg p-6 md:p-10 border border-gray-100">
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-gray-900 tracking-tight">
-            PDF Query Assistant
-          </h1>
-          <p className="text-gray-500 mt-3 text-lg">
-            Ask any question about the content of your PDF documents.
-          </p>
-        </div>
-
-        {/* Query Form */}
-        <form
-          onSubmit={handleSubmit}
-          className="flex flex-col sm:flex-row gap-3 mb-8"
-        >
-          <input
-            type="text"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="e.g., What is the policy period?"
-            className="flex-grow w-full px-4 py-3 bg-gray-100 rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition duration-200"
-            disabled={loading}
-            required
-          />
-          <button
-            type="submit"
-            className="bg-indigo-600 text-white font-semibold px-6 py-3 rounded-lg hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 transition duration-200 flex items-center justify-center disabled:bg-indigo-400 disabled:cursor-not-allowed"
-            disabled={loading}
-          >
-            {loading ? <LoadingSpinner /> : "Ask"}
-          </button>
-        </form>
-
-        {/* Results Display Area */}
-        {error && (
-          <div className="mt-6 bg-red-50 border border-red-200 text-red-800 p-4 rounded-lg">
-            <p>
-              <strong>Error:</strong> {error}
-            </p>
+    <div className="chat-container">
+      <div className="chat-header">
+        <button onClick={onBack} className="back-button">
+          ← Back to Upload
+        </button>
+        <h2>Document Knowledge Base</h2>
+      </div>
+      
+      <div className="messages-container">
+        {messages.map((msg, index) => (
+          <div key={index} className={`message ${msg.sender}`}>
+            {msg.text}
           </div>
-        )}
-
-        {result && (
-          <div className="mt-8 space-y-6 animate-fade-in">
-            {/* Answer Card */}
-            <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-5 shadow-sm">
-              <h2 className="text-xl font-semibold text-indigo-800 mb-2">
-                Answer
-              </h2>
-              <p className="text-indigo-900 leading-relaxed">{result.answer}</p>
-            </div>
-            {/* Reasoning Card */}
-            <div className="bg-gray-50 border border-gray-200 rounded-lg p-5 shadow-sm">
-              <h2 className="text-xl font-semibold text-gray-800 mb-2">
-                Reasoning
-              </h2>
-              <p className="text-gray-700 leading-relaxed">
-                {result.reasoning}
-              </p>
-            </div>
-            {/* Source Clause Card */}
-            <div className="bg-gray-50 border border-gray-200 rounded-lg p-5 shadow-sm">
-              <h2 className="text-xl font-semibold text-gray-800 mb-2">
-                Source Clause
-              </h2>
-              <p className="text-gray-600 text-sm leading-relaxed whitespace-pre-wrap font-mono bg-gray-100 p-3 rounded-md">
-                {result.sourceClause}
-              </p>
-            </div>
+        ))}
+        {isLoading && (
+          <div className="message bot">
+            <div className="typing-indicator">Typing...</div>
           </div>
         )}
       </div>
+
+      <form onSubmit={handleSendMessage} className="chat-input-container">
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Ask a question about the document..."
+          className="chat-input"
+          disabled={isLoading}
+        />
+        <button 
+          type="submit" 
+          className="send-button"
+          disabled={!query.trim() || isLoading}
+        >
+          Send
+        </button>
+      </form>
     </div>
   );
 };
+
+function App() {
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadedFile, setUploadedFile] = useState(null);
+
+  const handleFileChange = (event) => {
+    if (event.target.files && event.target.files.length > 0) {
+      setSelectedFile(event.target.files[0]);
+    }
+  };
+
+  const handleSubmit = async (event) => {
+    event.preventDefault();
+    
+    if (!selectedFile) {
+      alert('Please select a file first');
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', selectedFile);
+
+    setIsUploading(true);
+
+    try {
+      console.log('Uploading file...');
+      const response = await fetch('http://localhost:3000/upload', {
+        method: 'POST',
+        body: formData,
+        // Important: Don't set Content-Type header when using FormData
+        // The browser will set it automatically with the correct boundary
+      });
+
+      const data = await response.json();
+      console.log('Upload response:', data);
+      
+      if (response.ok && data.file) {
+        // Use the filename from the server response
+        setUploadedFile(data.file.filename);
+        console.log('File uploaded successfully:', data.file.filename);
+      } else {
+        throw new Error(data.error || 'Upload failed');
+      }
+    } catch (error) {
+      alert(`Error: ${error.message}`);
+      console.error('Upload error:', error);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleBackToUpload = () => {
+    setUploadedFile(null);
+    setSelectedFile(null);
+    const fileInput = document.getElementById('file-upload');
+    if (fileInput) fileInput.value = '';
+  };
+
+  if (uploadedFile) {
+    return <ChatInterface 
+      fileName={uploadedFile} 
+      uploadedFile={selectedFile} 
+      onBack={handleBackToUpload} 
+    />;
+  }
+
+  return (
+    <div className="app">
+      <h1>Document Upload</h1>
+      <form onSubmit={handleSubmit} className="upload-form">
+        <div className="file-input-container">
+          <input
+            type="file"
+            id="file-upload"
+            accept=".pdf,.doc,.docx"
+            onChange={handleFileChange}
+            className="file-input"
+          />
+          <label htmlFor="file-upload" className="file-label">
+            {selectedFile ? selectedFile.name : 'Choose a file (PDF/DOC/DOCX)'}
+          </label>
+        </div>
+        <button 
+          type="submit" 
+          className="upload-button"
+          disabled={!selectedFile || isUploading}
+        >
+          {isUploading ? 'Uploading...' : 'Upload & Chat'}
+        </button>
+      </form>
+    </div>
+  );
+}
 
 export default App;
