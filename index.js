@@ -5,6 +5,8 @@ const path = require("path");
 const express = require("express");
 const cors = require("cors");
 const pdfParse = require("pdf-parse");
+const multer = require("multer");
+const upload = multer({ dest: 'uploads/' });
 const { z } = require("zod");
 const {
   ChatGoogleGenerativeAI,
@@ -37,71 +39,132 @@ const embeddings = new GoogleGenerativeAIEmbeddings({
 });
 
 // --- Global variable to hold the vector store ---
-let vectorStore;
+let vectorStore = null;
+let isProcessing = false;
 
-// --- Step 1: Load, Split, and Index Documents on Server Start ---
-async function initializeVectorStore() {
-  console.log(
-    "1. Initializing vector store from documents in 'data' folder..."
-  );
-  const directoryPath = "data";
-  const files = fs.readdirSync(directoryPath).filter((f) => f.endsWith(".pdf"));
+// Ensure data directory exists
+const dataDir = path.join(__dirname, 'data');
+if (!fs.existsSync(dataDir)) {
+  fs.mkdirSync(dataDir, { recursive: true });
+}
 
-  if (files.length === 0) {
-    console.error(
-      "❌ No PDF files found in the 'data' directory. The API cannot start without data."
-    );
-    process.exit(1); // Exit if no data is available
-  }
+// --- Utility function to process PDF and add to vector store ---
+async function processPDF(filePath, filename) {
+  try {
+    const dataBuffer = fs.readFileSync(filePath);
+    const data = await pdfParse(dataBuffer);
 
-  const splitter = new RecursiveCharacterTextSplitter({
-    chunkSize: 1500,
-    chunkOverlap: 200,
-  });
-
-  let allDocs = [];
-  for (const file of files) {
-    try {
-      const filePath = path.join(directoryPath, file);
-      const dataBuffer = fs.readFileSync(filePath);
-      const data = await pdfParse(dataBuffer);
-
-      if (!data.text || data.text.trim() === "") {
-        console.warn(`⚠️ Warning: No text found in file: ${file}. Skipping.`);
-        continue;
-      }
-
-      const doc = new Document({
-        pageContent: data.text,
-        metadata: { source: file },
-      });
-      allDocs.push(doc);
-    } catch (error) {
-      console.error(
-        `❌ Failed to process file: ${file}. It may be corrupted. Error: ${error.message}`
-      );
+    if (!data.text || data.text.trim() === "") {
+      throw new Error("No text content found in PDF");
     }
-  }
 
-  if (allDocs.length === 0) {
-    console.error(
-      "❌ Error: No valid documents could be loaded after processing all files. The API cannot start."
+    const doc = new Document({
+      pageContent: data.text,
+      metadata: { source: filename },
+    });
+
+    const splitter = new RecursiveCharacterTextSplitter({
+      chunkSize: 1500,
+      chunkOverlap: 200,
+    });
+
+    const docChunks = await splitter.splitDocuments([doc]);
+    
+    if (vectorStore) {
+      // Add to existing vector store
+      await vectorStore.addDocuments(docChunks);
+    } else {
+      // Create new vector store
+      vectorStore = await FaissStore.fromDocuments(docChunks, embeddings);
+    }
+    
+    return true;
+  } catch (error) {
+    console.error(`Error processing ${filename}:`, error);
+    return false;
+  }
+}
+
+// --- Initialize vector store with existing PDFs ---
+async function initializeVectorStore() {
+  if (isProcessing) return;
+  isProcessing = true;
+  
+  console.log("1. Initializing vector store from documents in 'data' folder...");
+  
+  try {
+    const files = fs.readdirSync(dataDir).filter((f) => 
+      (f.endsWith(".pdf") || f.endsWith(".txt")) && 
+      f !== "_greetings.txt" // Exclude the greetings file from document processing
     );
-    process.exit(1);
+    
+    if (files.length === 0) {
+      console.log("ℹ️ No document files found in the 'data' directory. Waiting for uploads...");
+      return;
+    }
+
+    const splitter = new RecursiveCharacterTextSplitter({
+      chunkSize: 1500,
+      chunkOverlap: 200,
+    });
+
+    let allDocs = [];
+    for (const file of files) {
+      try {
+        const filePath = path.join(dataDir, file);
+        let text;
+        
+        if (file.endsWith('.txt')) {
+          // For text files, read directly
+          text = fs.readFileSync(filePath, 'utf-8');
+        } else {
+          // For PDFs, use pdf-parse
+          const dataBuffer = fs.readFileSync(filePath);
+          const data = await pdfParse(dataBuffer);
+          text = data.text;
+        }
+
+        if (!text || text.trim() === "") {
+          console.warn(`⚠️ Warning: No text found in file: ${file}. Skipping.`);
+          continue;
+        }
+
+        const doc = new Document({
+          pageContent: text,
+          metadata: { 
+            source: file,
+            type: file.endsWith('.txt') ? 'text' : 'pdf'
+          },
+        });
+        allDocs.push(doc);
+      } catch (error) {
+        console.error(
+          `❌ Failed to process file: ${file}. It may be corrupted. Error: ${error.message}`
+        );
+      }
+    }
+
+    if (allDocs.length === 0) {
+      console.log("ℹ️ No valid PDFs with text content found in the 'data' directory.");
+      return;
+    }
+
+    const docChunks = await splitter.splitDocuments(allDocs);
+    console.log(`✅ Successfully split documents into ${docChunks.length} chunks.`);
+
+    // Create the vector store from the documents
+    vectorStore = await FaissStore.fromDocuments(docChunks, embeddings);
+    console.log("✅ Vector store initialized and ready.");
+  } catch (error) {
+    console.error("❌ Error initializing vector store:", error);
+    throw error;
+  } finally {
+    isProcessing = false;
   }
-
-  const docChunks = await splitter.splitDocuments(allDocs);
-  console.log(
-    `✅ Successfully split documents into ${docChunks.length} chunks.`
-  );
-
-  // Create the vector store from the documents
-  vectorStore = await FaissStore.fromDocuments(docChunks, embeddings);
-  console.log("✅ Vector store initialized and ready.");
 }
 
 // --- Step 2: RAG Logic to Answer a Query ---
-async function answerQuery(userQuery) {
+async function answerQuery(userQuery, useAllDocuments = true) {
   console.log(`\n--- Answering query: "${userQuery}" ---`);
 
   // Parse the query to get the topic
@@ -121,10 +184,22 @@ async function answerQuery(userQuery) {
 
   // Retrieve relevant documents
   console.log("B. Searching for relevant clauses...");
-  const retriever = vectorStore.asRetriever(3);
+  
+  // If useAllDocuments is true, we'll let the retriever search across all documents
+  // Otherwise, it will use the existing vector store which already contains all documents
+  const retriever = vectorStore.asRetriever(5); // Increased from 3 to 5 to get more context
   const relevantClauses = await retriever.getRelevantDocuments(topic);
+  
   if (relevantClauses.length === 0) {
-    throw new Error("Could not find any relevant clauses for the topic.");
+    console.log("No relevant clauses found, trying a more general search...");
+    // Try a more general search if no results found
+    const generalRetriever = vectorStore.asRetriever(5);
+    const generalClauses = await generalRetriever.getRelevantDocuments(userQuery);
+    
+    if (generalClauses.length === 0) {
+      throw new Error("Could not find any relevant information in the knowledge base.");
+    }
+    return { answer: "I found some general information that might help: " + generalClauses[0].pageContent.substring(0, 500) + "..." };
   }
 
   // Generate the final response
@@ -154,10 +229,53 @@ async function answerQuery(userQuery) {
   return finalResult;
 }
 
+// --- File Upload Endpoint ---
+app.post("/upload", upload.single('file'), async (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: "No file uploaded" });
+  }
+
+  try {
+    const tempPath = req.file.path;
+    const targetPath = path.join(dataDir, req.file.originalname);
+    
+    // Move file from temp to data directory
+    fs.renameSync(tempPath, targetPath);
+    
+    // Process the PDF
+    const success = await processPDF(targetPath, req.file.originalname);
+    
+    if (!success) {
+      fs.unlinkSync(targetPath); // Clean up if processing fails
+      return res.status(400).json({ error: "Failed to process file" });
+    }
+    
+    res.json({ 
+      file: {
+        filename: req.file.originalname,
+        path: targetPath
+      }
+    });
+  } catch (error) {
+    console.error("Upload error:", error);
+    res.status(500).json({ error: "Error processing file" });
+  }
+});
+
 // --- API Endpoint Definition ---
-app.post("/ask", async (req, res) => {
-  // Extract the 'query' from the request body
-  const { query } = req.body;
+app.post("/api/ask", async (req, res) => {
+  if (!vectorStore) {
+    return res.status(400).json({ error: "No documents found in the knowledge base. Please upload some documents first." });
+  }
+  
+  // Extract the query and context from the request body
+  const { question, context = {} } = req.body;
+  const query = question || '';
+  const useAllDocuments = context.useAllDocuments !== false; // Default to true if not specified
+  
+  if (!query) {
+    return res.status(400).json({ error: "Query is required" });
+  }
 
   // Validate that a query was provided
   if (!query) {
@@ -166,34 +284,32 @@ app.post("/ask", async (req, res) => {
 
   try {
     // Call the main RAG logic function
-    const result = await answerQuery(query);
+    const result = await answerQuery(query, useAllDocuments);
     // Send the successful result back to the client
-    res.status(200).json(result);
+    res.status(200).json({
+      answer: result.answer || "I couldn't find an answer to your question.",
+      source: result.sourceClause ? result.sourceClause.substring(0, 200) + '...' : '',
+      success: true
+    });
   } catch (error) {
     // Handle any errors that occur during the process
     console.error("❌ An error occurred while processing the request:", error);
-    res
-      .status(500)
-      .json({
-        error: "An internal server error occurred.",
-        details: error.message,
-      });
+    res.status(500).json({
+      error: "An internal server error occurred.",
+      details: error.message
+    });
   }
 });
 
 // --- Start the Server ---
-// We first initialize the vector store, and only then start listening for requests.
-initializeVectorStore()
-  .then(() => {
-    app.listen(port, () => {
-      console.log(
-        `\n🚀 Server is running and listening on http://localhost:${port}`
-      );
-      console.log(
-        "✅ API is ready. Send POST requests to /ask to get answers."
-      );
-    });
-  })
-  .catch((error) => {
-    console.error("❌ Failed to initialize the server:", error);
-  });
+// Start the server
+app.listen(port, () => {
+  console.log(`Server is running on port ${port}`);
+  // Initialize vector store in the background
+  initializeVectorStore().catch(console.error);
+});
+
+// Handle unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
