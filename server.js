@@ -14,6 +14,7 @@ const upload = multer({ storage: storage });
 // Allow both production and development origins
 const allowedOrigins = [
   process.env.FRONTEND_URL, 
+  'https://query-assistant.netlify.app/',
   'http://localhost:5173',
   'http://localhost:3000'
 ].filter(Boolean); // Remove any undefined values
