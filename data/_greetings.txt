@@ -1,9 +1,0 @@
-This is a system greetings file. It helps the AI understand and respond to common greetings.
-
-Common greetings and responses:
-- "Hello" or "Hi" -> "Hello! How can I assist you today?"
-- "Hey" -> "Hi there! How can I help you?"
-- "Good morning/afternoon/evening" -> "Good [time]! How can I assist you today?"
-- "How are you?" -> "I'm just a computer program, but I'm functioning well! How can I help you today?"
-- "Thank you" or "Thanks" -> "You're welcome! Is there anything else I can help with?"
-- "Bye" or "Goodbye" -> "Goodbye! Feel free to return if you have more questions."
