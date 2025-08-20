@@ -11,18 +11,36 @@ const port = process.env.PORT || 3000;
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
-const allowedOrigins = [process.env.FRONTEND_URL, 'http://localhost:5173'];
+// Allow both production and development origins
+const allowedOrigins = [
+  process.env.FRONTEND_URL, 
+  'http://localhost:5173',
+  'http://localhost:3000'
+].filter(Boolean); // Remove any undefined values
 
 const corsOptions = {
   origin: function (origin, callback) {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) === -1) {
+    
+    // Check if the origin is in the allowed list or is a subdomain of the allowed origins
+    const isAllowed = allowedOrigins.some(allowedOrigin => 
+      origin === allowedOrigin || 
+      origin.startsWith(allowedOrigin.replace('https://', 'http://')) ||
+      origin.startsWith(allowedOrigin.replace('http://', 'https://'))
+    );
+    
+    if (isAllowed) {
+      return callback(null, true);
+    } else {
+      console.log('Blocked by CORS:', origin);
       const msg = 'The CORS policy for this site does not allow access from the specified Origin.';
       return callback(new Error(msg), false);
     }
-    return callback(null, true);
-  }
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
 };
 
 app.use(cors(corsOptions));

@@ -6,10 +6,14 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://localhost:5000',
+        target: 'https://query-assistant.onrender.com',
         changeOrigin: true,
+        secure: false,
         rewrite: (path) => path.replace(/^\/api/, '')
       }
     }
+  },
+  define: {
+    'import.meta.env.VITE_API_URL': JSON.stringify('https://query-assistant.onrender.com')
   }
 });

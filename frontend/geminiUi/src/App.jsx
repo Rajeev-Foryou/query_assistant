@@ -71,26 +71,11 @@ const ChatInterface = ({ onBack }) => {
     if (!userQuery || isLoading) return;
 
     addMessage(userQuery, 'user');
-    setQuery('');
-
-    if (isGreeting(userQuery)) {
-      if (userQuery.toLowerCase().includes('bye') || userQuery.toLowerCase().includes('goodbye')) {
-        addMessage("Goodbye! Feel free to return if you have more questions.", 'bot');
-      } else {
-        addMessage("Hello! How can I assist you today?", 'bot');
-      }
-      return;
-    }
-
-    if (isThankYou(userQuery)) {
-      addMessage("You're welcome! Is there anything else I can help with?", 'bot');
-      return;
-    }
-
     setIsLoading(true);
 
     try {
-            const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+      // Use VITE_API_URL from environment or fallback to production URL
+      const apiUrl = import.meta.env.VITE_API_URL || 'https://query-assistant.onrender.com';
       const response = await fetch(`${apiUrl}/query`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -98,13 +83,12 @@ const ChatInterface = ({ onBack }) => {
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.message || 'Failed to get response');
+        const error = await response.json().catch(() => ({}));
+        throw new Error(error.message || 'Failed to get response from server');
       }
 
       const data = await response.json();
       addMessage(data.answer, 'bot', data.sources);
-
     } catch (error) {
       console.error('Error sending message:', error);
       addSystemMessage(`Error: ${error.message}`);
