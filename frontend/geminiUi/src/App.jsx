@@ -1,23 +1,62 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
 
 const ChatInterface = ({ onBack }) => {
   const [query, setQuery] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const messagesEndRef = useRef(null);
   const [messages, setMessages] = useState([
     { 
-      text: "Hello! I'm your AI assistant. I can help you find information across all the documents in the knowledge base. How may I help you today?", 
-      sender: 'bot' 
+      text: "Hello! I'm your AI assistant. Upload a document and I can answer questions about it. How may I help you today?", 
+      sender: 'bot',
+      timestamp: new Date().toISOString(),
     }
   ]);
-  const [isLoading, setIsLoading] = useState(false);
 
-  // Check if the message is a greeting
+  const scrollToBottom = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, []);
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, scrollToBottom]);
+
+  const addSystemMessage = (text) => {
+    setMessages(prev => [...prev, {
+      text,
+      sender: 'system',
+      timestamp: new Date().toISOString()
+    }]);
+  };
+
+  const addMessage = (text, sender = 'user', sources = null) => {
+    setMessages(prev => [...prev, {
+      text,
+      sender,
+      timestamp: new Date().toISOString(),
+      sources
+    }]);
+  };
+  
+  // Check if the message is a greeting or farewell
   const isGreeting = (text) => {
+    const textLower = text.toLowerCase().trim();
     const greetings = ['hi', 'hello', 'hey', 'greetings', 'good morning', 'good afternoon', 'good evening'];
-    return greetings.some(greeting => 
-      text.toLowerCase().trim().startsWith(greeting) || 
-      text.toLowerCase().trim() === greeting
+    const farewells = ['bye', 'goodbye', 'see you', 'see ya', 'take care'];
+    
+    // Check for greetings
+    const isGreeting = greetings.some(greeting => 
+      textLower.startsWith(greeting) || 
+      textLower === greeting
     );
+
+    // Handle farewells
+    const isFarewell = farewells.some(farewell => 
+      textLower.startsWith(farewell) || 
+      textLower === farewell
+    );
+
+    return isGreeting || isFarewell;
   };
 
   // Check if the message is a thank you
@@ -28,112 +67,110 @@ const ChatInterface = ({ onBack }) => {
 
   const handleSendMessage = async (e) => {
     e.preventDefault();
-    const userMessage = query.trim();
-    if (!userMessage) return;
+    const userQuery = query.trim();
+    if (!userQuery || isLoading) return;
 
-    // Add user message
-    setMessages(prev => [...prev, { text: userMessage, sender: 'user' }]);
+    addMessage(userQuery, 'user');
     setQuery('');
+
+    if (isGreeting(userQuery)) {
+      if (userQuery.toLowerCase().includes('bye') || userQuery.toLowerCase().includes('goodbye')) {
+        addMessage("Goodbye! Feel free to return if you have more questions.", 'bot');
+      } else {
+        addMessage("Hello! How can I assist you today?", 'bot');
+      }
+      return;
+    }
+
+    if (isThankYou(userQuery)) {
+      addMessage("You're welcome! Is there anything else I can help with?", 'bot');
+      return;
+    }
+
     setIsLoading(true);
 
-    // Handle greetings and thanks without API call
-    if (isGreeting(userMessage)) {
-      setTimeout(() => {
-        setMessages(prev => [...prev, { 
-          text: userMessage.toLowerCase().includes('good') 
-            ? `${userMessage.split(' ')[0]} ${userMessage.split(' ')[1]}! How can I assist you today?`
-            : "Hello! How can I assist you today?", 
-          sender: 'bot' 
-        }]);
-        setIsLoading(false);
-      }, 500);
-      return;
-    }
-
-    if (isThankYou(userMessage)) {
-      setTimeout(() => {
-        setMessages(prev => [...prev, { 
-          text: "You're welcome! Is there anything else I can help with?", 
-          sender: 'bot' 
-        }]);
-        setIsLoading(false);
-      }, 500);
-      return;
-    }
-
     try {
-      console.log('Sending message with query:', query);
-      
-      // No need to check for uploaded file as we're using all available documents
-
-      // Call the backend API to get the response
-      const response = await fetch('http://localhost:3000/api/ask', {
+            const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+      const response = await fetch(`${apiUrl}/query`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          question: query,
-          context: {
-            useAllDocuments: true,
-            conversationId: 'user-' + Date.now() // Generate a unique conversation ID
-          }
-        })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: userQuery })
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        const error = await response.json();
+        throw new Error(error.message || 'Failed to get response');
       }
 
       const data = await response.json();
-      
-      // Add the bot's response to the messages
-      const botResponse = {
-        text: data.answer || "I couldn't generate a response. Please try again.",
-        sender: 'bot'
-      };
-      
-      setMessages(prev => [...prev, botResponse]);
+      addMessage(data.answer, 'bot', data.sources);
+
     } catch (error) {
       console.error('Error sending message:', error);
-      setMessages(prev => [...prev, { 
-        text: 'Sorry, there was an error processing your request. Please try again later.', 
-        sender: 'bot' 
-      }]);
+      addSystemMessage(`Error: ${error.message}`);
     } finally {
       setIsLoading(false);
     }
   };
 
+  // Format file size helper function
+  const formatFileSize = (bytes) => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  // Get color based on confidence score
+  const getConfidenceColor = (confidence) => {
+    if (confidence > 0.8) return '#2ecc71'; // Green
+    if (confidence > 0.5) return '#f39c12'; // Orange
+    return '#e74c3c'; // Red
+  };
+
   return (
     <div className="chat-container">
       <div className="chat-header">
-        <button onClick={onBack} className="back-button">
-          ← Back to Upload
-        </button>
-        <h2>Document Knowledge Base</h2>
+        <div className="header-left">
+          <button className="back-button" onClick={onBack}>
+            ← Back
+          </button>
+          <h2>AI Assistant</h2>
+        </div>
       </div>
       
+      {/* Messages */}
       <div className="messages-container">
-        {messages.map((msg, index) => (
-          <div key={index} className={`message ${msg.sender}`}>
-            {msg.text}
+        {messages.map((message, index) => (
+          <div key={index} className={`message ${message.sender}`}>
+            <div className="message-content">
+              {message.text}
+            </div>
+            <div className="message-timestamp">
+              {new Date(message.timestamp).toLocaleTimeString()}
+            </div>
           </div>
         ))}
+        
+        {/* Loading indicator */}
         {isLoading && (
           <div className="message bot">
-            <div className="typing-indicator">Typing...</div>
+            <div className="typing-indicator">Thinking...</div>
           </div>
         )}
+        
+        <div ref={messagesEndRef} />
       </div>
-
-      <form onSubmit={handleSendMessage} className="chat-input-container">
+      
+      {/* Input area */}
+      <form className="chat-input-container" onSubmit={handleSendMessage}>
         <input
           type="text"
+          className="chat-input"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Ask a question about the document..."
-          className="chat-input"
+          placeholder="Type your question here..."
           disabled={isLoading}
         />
         <button 
@@ -141,7 +178,7 @@ const ChatInterface = ({ onBack }) => {
           className="send-button"
           disabled={!query.trim() || isLoading}
         >
-          Send
+          {isLoading ? <span className="loading-spinner" /> : 'Send'}
         </button>
       </form>
     </div>
@@ -151,13 +188,16 @@ const ChatInterface = ({ onBack }) => {
 function App() {
   const [selectedFile, setSelectedFile] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
-  const [uploadedFile, setUploadedFile] = useState(null);
+  const [activeDocument, setActiveDocument] = useState(null);
 
   const handleFileChange = (event) => {
     if (event.target.files && event.target.files.length > 0) {
       setSelectedFile(event.target.files[0]);
     }
   };
+
+  const [uploadStatus, setUploadStatus] = useState(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -167,76 +207,191 @@ function App() {
       return;
     }
 
+    // Validate file type
+    const allowedExtensions = ['pdf', 'txt'];
+    const fileExt = selectedFile.name.split('.').pop().toLowerCase();
+    if (!allowedExtensions.includes(fileExt)) {
+      alert('Only PDF and TXT files are supported');
+      return;
+    }
+
+
     const formData = new FormData();
     formData.append('file', selectedFile);
 
     setIsUploading(true);
+    setUploadStatus('Uploading...');
+    setUploadProgress(0);
 
     try {
-      console.log('Uploading file...');
-      const response = await fetch('http://localhost:3000/upload', {
+      console.log('Starting file upload...', selectedFile.name);
+      
+            const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+      const response = await fetch(`${apiUrl}/upload`, {
         method: 'POST',
         body: formData,
-        // Important: Don't set Content-Type header when using FormData
-        // The browser will set it automatically with the correct boundary
       });
 
-      const data = await response.json();
-      console.log('Upload response:', data);
-      
-      if (response.ok && data.file) {
-        // Use the filename from the server response
-        setUploadedFile(data.file.filename);
-        console.log('File uploaded successfully:', data.file.filename);
+      if (response.ok) {
+        setUploadStatus('Processing...');
+        setUploadProgress(50);
+        
+        const data = await response.json();
+        console.log('Upload successful, received data:', data);
+        
+        setUploadStatus('Upload successful!');
+        setUploadProgress(100);
+
+        // Wait for a moment before transitioning
+        setTimeout(() => {
+          setActiveDocument({ 
+            name: selectedFile.name, 
+            namespace: data.namespace 
+          });
+        }, 1000);
+        setUploadStatus('Upload successful!');
+        setUploadProgress(100);
+        
+        setTimeout(() => {
+          setUploadStatus(null);
+          setUploadProgress(0);
+        }, 3000);
       } else {
-        throw new Error(data.error || 'Upload failed');
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Upload failed. Please try again.');
       }
     } catch (error) {
-      alert(`Error: ${error.message}`);
-      console.error('Upload error:', error);
+      console.error('Upload error details:', {
+        name: error.name,
+        message: error.message,
+        stack: error.stack
+      });
+      setUploadStatus(`Error: ${error.message}`);
+      setUploadProgress(0);
+      
+      // Clear error after 5 seconds
+      setTimeout(() => {
+        setUploadStatus(null);
+      }, 5000);
     } finally {
       setIsUploading(false);
     }
   };
 
   const handleBackToUpload = () => {
-    setUploadedFile(null);
+    setActiveDocument(null);
     setSelectedFile(null);
     const fileInput = document.getElementById('file-upload');
     if (fileInput) fileInput.value = '';
   };
 
-  if (uploadedFile) {
-    return <ChatInterface 
-      fileName={uploadedFile} 
-      uploadedFile={selectedFile} 
-      onBack={handleBackToUpload} 
-    />;
+  if (activeDocument) {
+    return <ChatInterface onBack={handleBackToUpload} />;
   }
 
   return (
     <div className="app">
       <h1>Document Upload</h1>
       <form onSubmit={handleSubmit} className="upload-form">
-        <div className="file-input-container">
-          <input
-            type="file"
-            id="file-upload"
-            accept=".pdf,.doc,.docx"
-            onChange={handleFileChange}
-            className="file-input"
-          />
-          <label htmlFor="file-upload" className="file-label">
-            {selectedFile ? selectedFile.name : 'Choose a file (PDF/DOC/DOCX)'}
-          </label>
+        <div className="file-upload-container">
+          <div className="file-input-wrapper">
+            <input
+              type="file"
+              id="file-upload"
+              accept=".pdf,.txt"
+              onChange={handleFileChange}
+              className="file-input"
+              disabled={isUploading}
+            />
+            <label htmlFor="file-upload" className={`file-label ${isUploading ? 'disabled' : ''}`}>
+              <div className="file-upload-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                </svg>
+              </div>
+              <div className="file-upload-text">
+                <p className="file-upload-title">
+                  {selectedFile ? selectedFile.name : 'Click to select a PDF file'}
+                </p>
+                <p className="file-upload-subtitle">
+                  {selectedFile 
+                    ? `${(selectedFile.size / 1024 / 1024).toFixed(2)} MB` 
+                    : 'or drag and drop'}
+                </p>
+              </div>
+            </label>
+          </div>
+
+          {selectedFile && (
+            <div className="file-preview">
+              <div className="file-info">
+                <div className="file-icon">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                </div>
+                <div className="file-details">
+                  <p className="file-name">{selectedFile.name}</p>
+                  <p className="file-size">
+                    {`${(selectedFile.size / 1024 / 1024).toFixed(2)} MB`}
+                  </p>
+                </div>
+              </div>
+
+              {uploadProgress > 0 && (
+                <div className="upload-progress">
+                  <div 
+                    className="progress-bar" 
+                    style={{ width: `${uploadProgress}%` }}
+                  ></div>
+                  <span className="progress-text">
+                    {uploadStatus || 'Uploading...'} {Math.round(uploadProgress)}%
+                  </span>
+                </div>
+              )}
+
+              {uploadStatus && uploadStatus.startsWith('Error') && (
+                <div className="upload-error">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="error-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                  </svg>
+                  <span>{uploadStatus}</span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
-        <button 
-          type="submit" 
-          className="upload-button"
-          disabled={!selectedFile || isUploading}
-        >
-          {isUploading ? 'Uploading...' : 'Upload & Chat'}
-        </button>
+
+        <div className="upload-actions">
+          <button 
+            type="button" 
+            className="cancel-button"
+            onClick={() => {
+              setSelectedFile(null);
+              setUploadStatus(null);
+              setUploadProgress(0);
+              const fileInput = document.getElementById('file-upload');
+              if (fileInput) fileInput.value = '';
+            }}
+            disabled={isUploading}
+          >
+            Cancel
+          </button>
+          <button 
+            type="submit" 
+            className={`upload-button ${!selectedFile || isUploading ? 'disabled' : ''}`}
+            disabled={!selectedFile || isUploading}
+          >
+            {isUploading ? (
+              <>
+                <svg className="spinner" viewBox="0 0 24 24">
+                  <circle className="path" cx="12" cy="12" r="10" fill="none" strokeWidth="4"></circle>
+                </svg>
+                {uploadStatus || 'Uploading...'}
+              </>
+            ) : 'Upload & Chat'}
+          </button>
+        </div>
       </form>
     </div>
   );
