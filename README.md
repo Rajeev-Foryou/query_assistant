@@ -105,3 +105,5 @@ Start the backend (node index.js) and frontend (npm run dev in geminiUi).
 Ask questions about your documents and get instant, explainable answers!
 Why This Matters
 This project demonstrates how to combine LLMs, vector search, and modern web tech to build powerful, explainable document Q&A systems for real-world use cases.
+
+DEPLOYMENT LINK - https://query-assistant.netlify.app
