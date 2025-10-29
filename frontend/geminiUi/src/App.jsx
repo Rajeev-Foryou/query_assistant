@@ -86,8 +86,18 @@ const ChatInterface = ({ onBack }) => {
     setIsLoading(true);
 
     try {
-      // Always use localhost for API requests during local testing
-      const apiUrl = "http://localhost:3000";
+      // Use VITE_API_URL if set, otherwise auto-switch between local and deployed
+      let apiUrl = import.meta.env.VITE_API_URL;
+      if (!apiUrl) {
+        if (
+          window.location.hostname === "localhost" ||
+          window.location.hostname === "127.0.0.1"
+        ) {
+          apiUrl = "http://localhost:3000";
+        } else {
+          apiUrl = "https://query-assistant.onrender.com";
+        }
+      }
       const response = await fetch(`${apiUrl}/query`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
