@@ -1,3 +1,18 @@
+require("dotenv").config();
+
+console.log("Starting server.js...");
+
+// Reminder: Available Google Generative AI models will be logged from geminiClient.js at startup.
+
+process.on("uncaughtException", (err) => {
+  console.error("Uncaught Exception:", err);
+  process.exit(1);
+});
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("Unhandled Rejection at:", promise, "reason:", reason);
+  process.exit(1);
+});
+
 const express = require("express");
 const multer = require("multer");
 const cors = require("cors");
@@ -14,15 +29,10 @@ const port = process.env.PORT || 3000;
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
-// Allow both production and development origins
+// Allow only production frontend origin
 const allowedOrigins = [
-  process.env.FRONTEND_URL,
-  "https://query-assistant.netlify.app",
-  "http://localhost:5173",
-  "http://localhost:3000",
-]
-  .filter(Boolean)
-  .map((origin) => (origin.endsWith("/") ? origin.slice(0, -1) : origin)); // Remove any trailing slashes
+  process.env.FRONTEND_URL, // e.g., "https://yourdomain.com"
+].filter(Boolean);
 
 const corsOptions = {
   origin: function (origin, callback) {
@@ -34,7 +44,7 @@ const corsOptions = {
       (allowedOrigin) =>
         origin === allowedOrigin ||
         origin.startsWith(allowedOrigin.replace("https://", "http://")) ||
-        origin.startsWith(allowedOrigin.replace("http://", "https://"))
+        origin.startsWith(allowedOrigin.replace("http://", "https://")),
     );
 
     if (isAllowed) {
@@ -66,15 +76,29 @@ app.use((err, req, res, next) => {
   });
 });
 
+// Serve static frontend files in production
+if (process.env.NODE_ENV === "production") {
+  const path = require("path");
+  app.use(express.static(path.join(__dirname, "frontend/geminiUi/dist")));
+  app.get("*", (req, res) => {
+    res.sendFile(path.join(__dirname, "frontend/geminiUi/dist", "index.html"));
+  });
+}
+
 // Routes
 app.post("/upload", upload.single("file"), uploadDocument);
 app.post("/query", queryDocuments);
 
 async function startServer() {
   try {
+    console.log("Initializing Pinecone...");
     await initializePinecone();
+    console.log("Pinecone initialized. Starting Express server...");
     app.listen(port, () => {
       console.log(`Server is running on port ${port}`);
+      console.log(
+        "Check your terminal for the list of available Google Generative AI models (logged from geminiClient.js).",
+      );
     });
   } catch (error) {
     console.error("Failed to start the server:", error);

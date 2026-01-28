@@ -4,8 +4,17 @@ require("dotenv").config();
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
 
 const embeddingModel = genAI.getGenerativeModel({
-  model: "text-embedding-004",
+  model: "models/gemini-embedding-001"
+, // 768-dim
 });
+
+async function getEmbedding(text) {
+  const result = await embeddingModel.embedContent(text);
+  const vector = result.embedding.values;
+  console.log("Embedding dimension (Gemini forced):", vector.length);
+  return vector;
+}
+
 let generationModel;
 try {
   generationModel = genAI.getGenerativeModel({
@@ -13,16 +22,6 @@ try {
   });
 } catch (e) {
   console.error("Error initializing generation model:", e);
-}
-
-async function getEmbedding(text) {
-  try {
-    const result = await embeddingModel.embedContent(text);
-    return result.embedding.values;
-  } catch (error) {
-    console.error("Error getting embedding:", error);
-    throw error;
-  }
 }
 
 async function generateAnswer(userQuery, context) {
@@ -48,13 +47,6 @@ async function generateAnswer(userQuery, context) {
     return response.text();
   } catch (error) {
     console.error("Error generating answer:", error);
-    // Try to list available models for debugging
-    try {
-      const models = await genAI.listModels();
-      console.error("Available models:", models);
-    } catch (listErr) {
-      console.error("Error listing available models:", listErr);
-    }
     throw error;
   }
 }

@@ -14,8 +14,8 @@ function chunkText(text, chunkSize = 500, overlap = 100) {
   }
   return chunks;
 }
-
 const uploadDocument = async (req, res) => {
+  console.log("==== /upload route hit ====");
   console.log("Upload request received");
 
   if (!req.file) {
@@ -26,6 +26,7 @@ const uploadDocument = async (req, res) => {
   console.log(
     `Processing file: ${req.file.originalname}, type: ${req.file.mimetype}, size: ${req.file.size} bytes`
   );
+  console.log("First 20 bytes of file buffer:", req.file.buffer.slice(0, 20));
 
   try {
     let text;
@@ -36,16 +37,19 @@ const uploadDocument = async (req, res) => {
         console.log("Parsing PDF file...");
         const data = await pdf(fileBuffer);
         text = data.text;
+        console.log("PDF parsed successfully. Extracted text length:", text.length);
       } catch (error) {
         console.error("Error parsing PDF:", error);
         return res.status(400).json({
           error:
             "The uploaded PDF appears to be corrupted or invalid. Please try a different file.",
+          details: error.message,
         });
       }
     } else {
       try {
         text = req.file.buffer.toString("utf-8");
+        console.log("Text file parsed successfully. Extracted text length:", text.length);
       } catch (error) {
         console.error("Error parsing file:", error);
         return res.status(400).json({
@@ -62,9 +66,12 @@ const uploadDocument = async (req, res) => {
     const namespace = uuidv4();
 
     console.log("Generating embeddings in parallel...");
-    const embeddingPromises = chunks.map((chunk) => getEmbedding(chunk));
-    const embeddings = await Promise.all(embeddingPromises);
-    console.log("Embeddings generated successfully.");
+    const embeddingPromises = chunks.map((chunk, i) => {
+      console.log(`Generating embedding for chunk ${i} (length: ${chunk.length})`);
+      return getEmbedding(chunk);
+    });
+        const embeddings = await Promise.all(embeddingPromises);
+    console.log("First embedding dimension:", embeddings[0].length);
 
     const vectors = chunks.map((chunk, i) => ({
       id: `${req.file.originalname}-chunk-${i}`,
@@ -184,5 +191,5 @@ const queryDocuments = async (req, res) => {
   }
 };
 
-// ✅ Export both functions properly
+
 module.exports = { uploadDocument, queryDocuments };
